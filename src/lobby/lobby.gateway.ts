@@ -22,8 +22,11 @@ type Room = {
   players: Map<string, Player>;
   hostSocketId: string;
   phase: 'lobby' | 'night' | 'day' | 'ended';
+  dayStage?: 'discussion' | 'voting';
   timer?: NodeJS.Timeout;
+  dayStageTimer?: NodeJS.Timeout;
   winner?: 'mafia' | 'town';
+  votes?: Map<string, string>; // voterSocketId -> targetSocketId
 };
 
 type Role = {
@@ -212,17 +215,46 @@ export class LobbyGateway implements OnGatewayConnection, OnGatewayDisconnect {
     return null;
   }
 
-  private setPhase(roomId: string, phase: 'night' | 'day') {
+    @SubscribeMessage('vote_player')
+    handleVote(
+      @MessageBody() payload: { target: string },
+      @ConnectedSocket() client: Socket
+    ) {
+    const roomId = this.findRoomBySocket(client.id);
+    if (!roomId) return;
 
     const room = this.rooms.get(roomId);
-    if (!room) return;
-    if (room.phase === 'ended') return;
 
+    if (
+      !room ||
+      room.phase !== 'day' ||
+      room.dayStage !== 'voting'
+    ) return;
+    
+    const voter = room.players.get(client.id);
+    if (!voter || !voter.alive) return;
+
+    const target = [...room.players.values()]
+      .find(p => p.username === payload.target);
+
+    if (!target || !target.alive) return;
+    if (target.socketId === client.id) return;
+
+    room.votes ??= new Map();
+    room.votes.set(client.id, target.socketId);
+
+    this.emitVoteState(room);
+  }
+
+  private setPhase(roomId: string, phase: 'night' | 'day') {
+    const room = this.rooms.get(roomId);
+    if (!room || room.phase === 'ended') return;
+  
     const winner = this.checkWinCondition(room);
     if (winner) {
       this.endGame(roomId, winner);
       return;
-    }    
+    }
   
     if (room.timer) {
       clearTimeout(room.timer);
@@ -230,24 +262,54 @@ export class LobbyGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   
     room.phase = phase;
-
-    this.emitSystem(roomId, `Phase changed to ${phase}`);
+  
+    if (phase === 'day') {
+      room.dayStage = 'discussion';
+      room.votes = undefined;
+    
+      this.emitSystem(roomId, "Day has begun. Discuss!");
+    
+      room.dayStageTimer = setTimeout(() => {
+        if (room.phase !== 'day') return;
+    
+        room.dayStage = 'voting';
+        room.votes = new Map();
+    
+        this.emitSystem(roomId, "Voting has started!");
+        this.emitRoomState(roomId);
+      }, 30_000);
+    } else {
+      room.dayStage = undefined;
+      room.votes = undefined;
+    }
+      
     this.emitRoomState(roomId);
   
-    const duration =
-      phase === 'night' ? 30_000 : 60_000;    
+    const duration = phase === 'night' ? 30_000 : 60_000;
   
     room.timer = setTimeout(() => {
+      if (phase === 'day') {
+        this.resolveVotes(room);
+      }
       const nextPhase = phase === 'night' ? 'day' : 'night';
       this.setPhase(roomId, nextPhase);
+      if (room.dayStageTimer) {
+        clearTimeout(room.dayStageTimer);
+        room.dayStageTimer = undefined;
+      }      
     }, duration);
   }
+  
 
   private endGame(roomId: string, winner: 'mafia' | 'town') {
     const room = this.rooms.get(roomId);
     if (!room) return;
   
     if (room.timer) clearTimeout(room.timer);
+    if (room.dayStageTimer) clearTimeout(room.dayStageTimer);
+  
+    room.timer = undefined;
+    room.dayStageTimer = undefined;
   
     room.phase = 'ended';
     room.winner = winner;
@@ -257,7 +319,7 @@ export class LobbyGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
   
     this.server.to(roomId).emit('game_over', { winner });
-  }
+  }  
   
   private assignRoles(room: Room) {
     const players = [...room.players.values()];
@@ -295,6 +357,70 @@ export class LobbyGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }  
 
+  private emitVoteState(room: Room) {
+    if (!room.votes) return;
+  
+    const tally: Record<string, number> = {};
+    const votes: { from: string; to: string }[] = [];
+  
+    for (const [voterId, targetId] of room.votes.entries()) {
+      const voter = room.players.get(voterId);
+      const target = room.players.get(targetId);
+  
+      if (!voter || !target) continue;
+  
+      // tally
+      tally[target.username] = (tally[target.username] ?? 0) + 1;
+  
+      // explicit mapping
+      votes.push({
+        from: voter.username,
+        to: target.username,
+      });
+    }
+  
+    this.server.to(room.id).emit('vote_update', {
+      tally,
+      votes,
+      totalVoters: room.votes.size,
+    });
+  }  
+
+  private resolveVotes(room: Room) {
+    if (!room.votes || room.votes.size === 0) {
+      this.emitSystem(room.id, "No votes cast. Nobody was eliminated.");
+      return;
+    }
+
+    const counts = new Map<string, number>();
+
+    for (const targetId of room.votes.values()) {
+      counts.set(targetId, (counts.get(targetId) ?? 0) + 1);
+    }
+
+    const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+
+    if (sorted.length > 1 && sorted[0][1] === sorted[1][1]) {
+      this.emitSystem(room.id, "Vote tied. Nobody was eliminated.");
+      return;
+    }
+
+    const [loserId] = sorted[0];
+    const victim = room.players.get(loserId);
+    if (!victim) return;
+
+    victim.alive = false;
+    this.emitSystem(room.id, `${victim.username} was eliminated`);
+    this.emitRoomState(room.id);
+
+    const winner = this.checkWinCondition(room);
+    if (winner) {
+      this.endGame(room.id, winner);
+    }
+
+    room.votes = undefined;
+  }
+  
   private emitRoles(room: Room) {
     for (const player of room.players.values()) {
       this.server.to(player.socketId).emit('role_assigned', {
@@ -309,6 +435,7 @@ export class LobbyGateway implements OnGatewayConnection, OnGatewayDisconnect {
   
     this.server.to(roomId).emit('room_state', {
       roomId,
+      dayStage: room.dayStage,
       phase: room.phase,
       players: [...room.players.values()].map(p => ({
         username: p.username,
