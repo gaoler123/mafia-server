@@ -32,6 +32,7 @@
       <div class="px-4 py-3 border-b border-border font-semibold">
         🕵️ Mafia Room
         <span id="roomLabel" class="ml-2 text-xs text-system"></span>
+        <span id="phaseLabel" class="ml-2 text-xs uppercase"></span>
       </div>
 
       <div id="messages"
@@ -77,6 +78,12 @@
                 class="w-full bg-rose-600 hover:bg-rose-500 py-2 rounded-lg text-sm hidden">
           Leave Room
         </button>
+
+        <button id="startBtn"
+                class="w-full bg-purple-600 hover:bg-purple-500 py-2 rounded-lg text-sm hidden">
+          Start Game
+        </button>
+
       </div>
 
       <!-- Players -->
@@ -95,6 +102,7 @@
     const messages = document.getElementById("messages");
     const usersList = document.getElementById("users");
     const roomLabel = document.getElementById("roomLabel");
+    const phaseLabel = document.getElementById("phaseLabel");
 
     const usernameInput = document.getElementById("usernameInput");
     const roomInput = document.getElementById("roomInput");
@@ -102,6 +110,7 @@
     const createBtn = document.getElementById("createBtn");
     const joinBtn = document.getElementById("joinBtn");
     const leaveBtn = document.getElementById("leaveBtn");
+    const startBtn = document.getElementById("startBtn");
 
     let currentRoomId = null;
 
@@ -127,11 +136,14 @@
       currentRoomId = null;
       roomLabel.textContent = "";
       usersList.innerHTML = "";
+      phaseLabel.textContent = "";
+      startBtn.classList.add("hidden");
       leaveBtn.classList.add("hidden");
       createBtn.classList.remove("hidden");
       joinBtn.classList.remove("hidden");
       roomInput.disabled = false;
       usernameInput.disabled = false;
+      disableChat();
     }
 
     createBtn.onclick = () => {
@@ -159,12 +171,36 @@
       if (e.key === "Enter") sendMessage();
     });
 
+    startBtn.onclick = () => {
+      socket.emit("start_game");
+    };
+
+
     function sendMessage() {
       const message = messageInput.value.trim();
       if (!message) return;
       socket.emit("chat_message", { message });
       messageInput.value = "";
     }
+
+    function enableChat() {
+      messageInput.disabled = false;
+      sendBtn.disabled = false;
+
+      messageInput.placeholder = "Type a message...";
+      messageInput.classList.remove("opacity-50");
+      sendBtn.classList.remove("opacity-50");
+    }
+
+    function disableChat() {
+      messageInput.disabled = true;
+      sendBtn.disabled = true;
+
+      messageInput.placeholder = "Chat disabled until room joined";
+      messageInput.classList.add("opacity-50");
+      sendBtn.classList.add("opacity-50");
+    }
+
     socket.on("room_joined", ({ roomId }) => {
       currentRoomId = roomId;
       roomLabel.textContent = `Room: ${roomId}`;
@@ -178,10 +214,7 @@
       roomInput.disabled = true;
       usernameInput.disabled = true;
 
-      messageInput.disabled = false;
-      sendBtn.disabled = false;
-      messageInput.classList.remove("opacity-50");
-      sendBtn.classList.remove("opacity-50");
+      enableChat();
     });
 
     socket.on("room_state", state => {
@@ -192,6 +225,21 @@
         li.textContent = p.isHost ? `${p.username} (host)` : p.username;
         usersList.appendChild(li);
       });
+
+      phaseLabel.textContent = state.phase;
+
+      phaseLabel.className =
+        state.phase === "night"
+          ? "ml-2 text-xs text-indigo-400"
+          : "ml-2 text-xs text-amber-400";
+
+      const me = usernameInput.value.trim();
+      const isHost = state.players.find(p => p.username === me)?.isHost;
+
+      startBtn.classList.toggle(
+        "hidden",
+        !isHost || state.phase !== "lobby"
+      );
     });
 
     socket.on("chat_message", data => {

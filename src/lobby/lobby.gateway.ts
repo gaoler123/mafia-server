@@ -18,7 +18,8 @@ type Room = {
   id: string;
   players: Map<string, Player>;
   hostSocketId: string;
-  phase: 'lobby' | 'in_game';
+  phase: 'lobby' | 'night' | 'day';
+  timer?: NodeJS.Timeout;
 };
 
 @WebSocketGateway({
@@ -115,6 +116,9 @@ export class LobbyGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     if (room.players.size === 0) {
+      if (room.timer) {
+        clearTimeout(room.timer);
+      }
       this.rooms.delete(roomId);
       return;
     }
@@ -152,27 +156,48 @@ export class LobbyGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   @SubscribeMessage('start_game')
   handleStartGame(
-    @MessageBody() payload: { message: string },
     @ConnectedSocket() client: Socket
   ) {
+    
     const roomId = this.findRoomBySocket(client.id);
     if (!roomId) return;
 
     const room = this.rooms.get(roomId);
     if (!room) return;
+    if (room.phase !== 'lobby') return;
 
     const player = room.players.get(client.id);
     if (!player) return;
 
     if (!(room.hostSocketId === player.socketId)) return;
 
-    room.phase = 'in_game';
-
-    this.server.to(roomId).emit('chat_message', {
-      from: player.username,
-      message: payload.message,
-    });
+    this.emitSystem(roomId, `${player.username} started the game`);
+    this.setPhase(roomId, 'night');
   }
+
+  private setPhase(roomId: string, phase: 'night' | 'day') {
+    const room = this.rooms.get(roomId);
+    if (!room) return;
+  
+    if (room.timer) {
+      clearTimeout(room.timer);
+      room.timer = undefined;
+    }
+  
+    room.phase = phase;
+
+    this.emitSystem(roomId, `Phase changed to ${phase}`);
+    this.emitRoomState(roomId);
+  
+    const duration =
+      phase === 'night' ? 30_000 : 60_000;    
+  
+    room.timer = setTimeout(() => {
+      const nextPhase = phase === 'night' ? 'day' : 'night';
+      this.setPhase(roomId, nextPhase);
+    }, duration);
+  }
+  
 
   private emitRoomState(roomId: string) {
     const room = this.rooms.get(roomId);
