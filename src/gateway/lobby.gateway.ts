@@ -16,6 +16,7 @@ import { generateRoomId } from '../utils/id.utils';
 import { Room } from '../types/room.types';
 import { VotingService } from 'src/game/voting.service';
 import { WinService } from 'src/game/win.service';
+import { RolesService } from 'src/game/roles.service';
 
 @WebSocketGateway({ cors: { origin: '*' } })
 export class LobbyGateway
@@ -27,7 +28,8 @@ export class LobbyGateway
   private roomManager = new RoomManager();
   private phaseService = new PhaseService();
   private votingService = new VotingService();
-  private winService = new WinService()
+  private winService = new WinService();
+  private rolesService = new RolesService();
   private users = 0;
 
   /* ---------------------------------- */
@@ -155,7 +157,7 @@ export class LobbyGateway
     const player = room.players.get(client.id);
     if (!player || room.hostSocketId !== client.id) return;
 
-    this.assignRoles(room);
+    this.rolesService.assign(room);
     this.emitRoles(room);
 
     this.emitSystem(room.id, `${player.username} started the game`);
@@ -206,7 +208,7 @@ export class LobbyGateway
     if (result) this.emitSystem(room.id, result);
     this.emitRoomState(room.id);
   }
-  
+
   /* ---------------------------------- */
   /* Emits                              */
   /* ---------------------------------- */
@@ -257,28 +259,6 @@ export class LobbyGateway
       tally,
       votes,
       totalVoters: room.votes.size,
-    });
-  }
-
-  /* ---------------------------------- */
-  /* Roles                              */
-  /* ---------------------------------- */
-
-  private assignRoles(room: Room) {
-    const players = [...room.players.values()];
-    if (players.some(p => p.role)) return;
-
-    players.sort(() => Math.random() - 0.5);
-    players.forEach(p => (p.alive = true));
-
-    const mafiaCount = Math.max(1, Math.floor(players.length / 4));
-
-    players.forEach((p, i) => {
-      if (i < mafiaCount) p.role = { roleName: 'mafia', team: 'mafia' };
-      else if (i === mafiaCount) p.role = { roleName: 'detective', team: 'town' };
-      else if (i === mafiaCount + 1)
-        p.role = { roleName: 'doctor', team: 'town' };
-      else p.role = { roleName: 'citizen', team: 'town' };
     });
   }
 }
