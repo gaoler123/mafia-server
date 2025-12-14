@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AppService } from './app.service';
-import { LobbyGateway } from './lobby/lobby.gateway';
+import { LobbyGateway } from './gateway/lobby.gateway';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'path';
 
