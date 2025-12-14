@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Mafia Rooms</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            bg: "#0f172a",
+            panel: "#020617",
+            border: "#1e293b",
+            system: "#64748b",
+          }
+        }
+      }
+    }
+  </script>
+</head>
+
+<body class="bg-bg text-slate-200 h-screen flex">
+
+  <div class="flex w-full max-w-6xl mx-auto p-4 gap-4">
+
+    <!-- Chat / System panel -->
+    <div class="flex flex-col flex-1 bg-panel rounded-xl border border-border">
+      <div class="px-4 py-3 border-b border-border font-semibold">
+        🕵️ Mafia Room
+        <span id="roomLabel" class="ml-2 text-xs text-system"></span>
+      </div>
+
+      <div id="messages"
+           class="flex-1 overflow-y-auto px-4 py-3 space-y-2 text-sm"></div>
+
+      <div class="border-t border-border p-3 flex gap-2">
+        <input id="messageInput"
+               placeholder="Chat disabled until room joined"
+               disabled
+               class="flex-1 bg-bg border border-border rounded-lg px-3 py-2 text-sm opacity-50" />
+        <button id="sendBtn"
+                disabled
+                class="bg-slate-700 px-4 py-2 rounded-lg text-sm opacity-50">
+          Send
+        </button>
+      </div>
+    </div>
+
+    <!-- Sidebar -->
+    <div class="w-72 bg-panel rounded-xl border border-border flex flex-col">
+
+      <!-- Room controls -->
+      <div class="p-4 border-b border-border space-y-2">
+        <input id="usernameInput"
+               placeholder="Username"
+               class="w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm" />
+
+        <input id="roomInput"
+               placeholder="Room ID (to join)"
+               class="w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm" />
+
+        <button id="createBtn"
+                class="w-full bg-indigo-600 hover:bg-indigo-500 py-2 rounded-lg text-sm">
+          Create Room
+        </button>
+
+        <button id="joinBtn"
+                class="w-full bg-emerald-600 hover:bg-emerald-500 py-2 rounded-lg text-sm">
+          Join Room
+        </button>
+
+        <button id="leaveBtn"
+                class="w-full bg-rose-600 hover:bg-rose-500 py-2 rounded-lg text-sm hidden">
+          Leave Room
+        </button>
+      </div>
+
+      <!-- Players -->
+      <div class="flex-1 p-4">
+        <div class="text-xs text-system mb-2 uppercase tracking-wide">
+          Players
+        </div>
+        <ul id="users" class="space-y-1 text-sm"></ul>
+      </div>
+    </div>
+  </div>
+
+  <script defer>
+    const socket = io();
+
+    const messages = document.getElementById("messages");
+    const usersList = document.getElementById("users");
+    const roomLabel = document.getElementById("roomLabel");
+
+    const usernameInput = document.getElementById("usernameInput");
+    const roomInput = document.getElementById("roomInput");
+
+    const createBtn = document.getElementById("createBtn");
+    const joinBtn = document.getElementById("joinBtn");
+    const leaveBtn = document.getElementById("leaveBtn");
+
+    let currentRoomId = null;
+
+    function addSystemMessage(text) {
+      const div = document.createElement("div");
+      div.className = "text-system italic text-xs";
+      div.textContent = text;
+      messages.appendChild(div);
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    function addChatMessage(from, text) {
+      const div = document.createElement("div");
+      div.innerHTML = `
+        <span class="font-semibold text-slate-100">${from}:</span>
+        <span class="text-slate-300">${text}</span>
+      `;
+      messages.appendChild(div);
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    function resetUI() {
+      currentRoomId = null;
+      roomLabel.textContent = "";
+      usersList.innerHTML = "";
+      leaveBtn.classList.add("hidden");
+      createBtn.classList.remove("hidden");
+      joinBtn.classList.remove("hidden");
+      roomInput.disabled = false;
+      usernameInput.disabled = false;
+    }
+
+    createBtn.onclick = () => {
+      const username = usernameInput.value.trim();
+      if (!username) return;
+
+      socket.emit("create_room", { username });
+    };
+
+    joinBtn.onclick = () => {
+      const username = usernameInput.value.trim();
+      const roomId = roomInput.value.trim().toUpperCase();
+      if (!username || !roomId) return;
+
+      socket.emit("join_room", { roomId, username });
+    };
+
+    leaveBtn.onclick = () => {
+      socket.emit("leave_room");
+      resetUI();
+    };
+
+    sendBtn.onclick = sendMessage;
+    messageInput.addEventListener("keypress", e => {
+      if (e.key === "Enter") sendMessage();
+    });
+
+    function sendMessage() {
+      const message = messageInput.value.trim();
+      if (!message) return;
+      socket.emit("chat_message", { message });
+      messageInput.value = "";
+    }
+    socket.on("room_joined", ({ roomId }) => {
+      currentRoomId = roomId;
+      roomLabel.textContent = `Room: ${roomId}`;
+
+      addSystemMessage(`Joined room ${roomId}`);
+
+      createBtn.classList.add("hidden");
+      joinBtn.classList.add("hidden");
+      leaveBtn.classList.remove("hidden");
+
+      roomInput.disabled = true;
+      usernameInput.disabled = true;
+
+      messageInput.disabled = false;
+      sendBtn.disabled = false;
+      messageInput.classList.remove("opacity-50");
+      sendBtn.classList.remove("opacity-50");
+    });
+
+    socket.on("room_state", state => {
+      usersList.innerHTML = "";
+
+      state.players.forEach(p => {
+        const li = document.createElement("li");
+        li.textContent = p.isHost ? `${p.username} (host)` : p.username;
+        usersList.appendChild(li);
+      });
+    });
+
+    socket.on("chat_message", data => {
+      addChatMessage(data.from, data.message);
+    });
+
+    socket.on("system_message", data => {
+      addSystemMessage(data.message);
+    });
+  </script>
+</body>
+</html>
