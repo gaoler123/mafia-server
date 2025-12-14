@@ -35,7 +35,7 @@ export type PhaseResult =
           room.dayStage = 'voting';
           room.votes = new Map();
           onStateChange();
-        }, 30_000);
+        }, 3_000);
       } else {
         room.dayStage = undefined;
         room.votes = undefined;
