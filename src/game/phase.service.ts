@@ -35,7 +35,7 @@ export type PhaseResult =
           room.dayStage = 'voting';
           room.votes = new Map();
           onStateChange();
-        }, 3_000);
+        }, 30_000);
       } else {
         room.dayStage = undefined;
         room.votes = undefined;
@@ -58,7 +58,7 @@ export type PhaseResult =
   
         const nextPhase = phase === 'night' ? 'day' : 'night';
         this.startPhase(room, nextPhase, checkWin, onResolveDay, onStateChange);
-      }, phase === 'night' ? 3_000 : 6_000);
+      }, phase === 'night' ? 30_000 : 60_000);
     }
   
     end(room: Room, winner: 'mafia' | 'town') {
