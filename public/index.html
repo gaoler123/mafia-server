@@ -249,6 +249,16 @@
     socket.on("system_message", data => {
       addSystemMessage(data.message);
     });
+
+    socket.on("role_assigned", ({ role }) => {
+      addSystemMessage(
+        `You are ${role.roleName}. Aligned with team (${role.team.toUpperCase()})`
+      );
+    });
+
+    socket.on("game_over", ({ winner }) => {
+      addSystemMessage(`Game Over — ${winner.toUpperCase()} wins`);
+    });
   </script>
 </body>
 </html>
