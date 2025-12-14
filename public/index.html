@@ -99,6 +99,11 @@
   <script defer>
     const socket = io();
 
+    let currentPhase = null;
+    let currentDayStage = null;
+    let myUsername = null;
+    let isAlive = true;
+
     const messages = document.getElementById("messages");
     const usersList = document.getElementById("users");
     const roomLabel = document.getElementById("roomLabel");
@@ -203,6 +208,7 @@
 
     socket.on("room_joined", ({ roomId }) => {
       currentRoomId = roomId;
+      myUsername = usernameInput.value.trim();
       roomLabel.textContent = `Room: ${roomId}`;
 
       addSystemMessage(`Joined room ${roomId}`);
@@ -220,26 +226,75 @@
     socket.on("room_state", state => {
       usersList.innerHTML = "";
 
+      currentPhase = state.phase;
+      currentDayStage = state.dayStage;
+
       state.players.forEach(p => {
         const li = document.createElement("li");
-        li.textContent = p.isHost ? `${p.username} (host)` : p.username;
+        li.className = "flex items-center justify-between";
+
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = p.isHost
+          ? `${p.username} (host)`
+          : p.username;
+
+        li.appendChild(nameSpan);
+
+        // Voting button
+        if (
+          currentPhase === "day" &&
+          currentDayStage === "voting" &&
+          p.username !== myUsername &&
+          isAlive
+        ) {
+          const voteBtn = document.createElement("button");
+          voteBtn.textContent = "Vote";
+          voteBtn.className =
+            "ml-2 text-xs bg-rose-600 hover:bg-rose-500 px-2 py-1 rounded";
+
+          voteBtn.onclick = () => {
+            socket.emit("vote_player", { target: p.username });
+          };
+
+          li.appendChild(voteBtn);
+        }
+
         usersList.appendChild(li);
       });
 
-      phaseLabel.textContent = state.phase;
+      phaseLabel.textContent =
+        state.phase === "day" && state.dayStage
+          ? `${state.phase} (${state.dayStage})`
+          : state.phase;
 
       phaseLabel.className =
         state.phase === "night"
           ? "ml-2 text-xs text-indigo-400"
           : "ml-2 text-xs text-amber-400";
 
-      const me = usernameInput.value.trim();
-      const isHost = state.players.find(p => p.username === me)?.isHost;
+      const isHost = state.players.find(p => p.username === myUsername)?.isHost;
 
       startBtn.classList.toggle(
         "hidden",
         !isHost || state.phase !== "lobby"
       );
+    });
+
+    socket.on("vote_update", data => {
+      addSystemMessage("🗳️ Vote update:");
+
+      Object.entries(data.tally).forEach(([user, count]) => {
+        addSystemMessage(`• ${user}: ${count} vote(s)`);
+      });
+
+      data.votes.forEach(v => {
+        addSystemMessage(`${v.from} voted for ${v.to}`);
+      });
+    });
+
+    socket.on("game_over", ({ winner }) => {
+      addSystemMessage(`🏁 Game Over — ${winner.toUpperCase()} wins`);
+      disableChat();
     });
 
     socket.on("chat_message", data => {
@@ -248,16 +303,18 @@
 
     socket.on("system_message", data => {
       addSystemMessage(data.message);
+
+      if (data.message.includes("was eliminated") &&
+          data.message.includes(myUsername)) {
+        isAlive = false;
+        addSystemMessage("☠️ You are dead. You can no longer vote.");
+      }
     });
 
     socket.on("role_assigned", ({ role }) => {
       addSystemMessage(
         `You are ${role.roleName}. Aligned with team (${role.team.toUpperCase()})`
       );
-    });
-
-    socket.on("game_over", ({ winner }) => {
-      addSystemMessage(`Game Over — ${winner.toUpperCase()} wins`);
     });
   </script>
 </body>

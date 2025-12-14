@@ -14,6 +14,8 @@ import { PhaseService } from 'src/game/phase.service';
 import { generateRoomId } from '../utils/id.utils';
 
 import { Room } from '../types/room.types';
+import { VotingService } from 'src/game/voting.service';
+import { WinService } from 'src/game/win.service';
 
 @WebSocketGateway({ cors: { origin: '*' } })
 export class LobbyGateway
@@ -24,6 +26,8 @@ export class LobbyGateway
 
   private roomManager = new RoomManager();
   private phaseService = new PhaseService();
+  private votingService = new VotingService();
+  private winService = new WinService()
   private users = 0;
 
   /* ---------------------------------- */
@@ -159,9 +163,11 @@ export class LobbyGateway
     this.phaseService.startPhase(
       room,
       'night',
-      () => this.checkWinCondition(room),
-      () => this.resolveDay(room)
+      () => this.winService.check(room),
+      () => this.resolveDay(room),
+      () => this.emitRoomState(room.id)
     );
+    
 
     this.emitRoomState(room.id);
   }
@@ -186,8 +192,7 @@ export class LobbyGateway
     );
     if (!target || target.socketId === client.id) return;
 
-    room.votes ??= new Map();
-    room.votes.set(client.id, target.socketId);
+    this.votingService.vote(room, client.id, target.socketId);
 
     this.emitVoteState(room);
   }
@@ -197,40 +202,11 @@ export class LobbyGateway
   /* ---------------------------------- */
 
   private resolveDay(room: Room) {
-    if (!room.votes || room.votes.size === 0) {
-      this.emitSystem(room.id, 'No votes cast. Nobody was eliminated.');
-      return;
-    }
-
-    const tally = new Map<string, number>();
-    for (const id of room.votes.values()) {
-      tally.set(id, (tally.get(id) ?? 0) + 1);
-    }
-
-    const sorted = [...tally.entries()].sort((a, b) => b[1] - a[1]);
-    if (sorted.length > 1 && sorted[0][1] === sorted[1][1]) {
-      this.emitSystem(room.id, 'Vote tied. Nobody was eliminated.');
-      return;
-    }
-
-    const victim = room.players.get(sorted[0][0]);
-    if (!victim) return;
-
-    victim.alive = false;
-    this.emitSystem(room.id, `${victim.username} was eliminated`);
+    const result = this.votingService.resolve(room);
+    if (result) this.emitSystem(room.id, result);
     this.emitRoomState(room.id);
   }
-
-  private checkWinCondition(room: Room): 'mafia' | 'town' | null {
-    const alive = [...room.players.values()].filter(p => p.alive);
-    const mafia = alive.filter(p => p.role?.team === 'mafia').length;
-    const town = alive.length - mafia;
-
-    if (mafia === 0) return 'town';
-    if (mafia >= town) return 'mafia';
-    return null;
-  }
-
+  
   /* ---------------------------------- */
   /* Emits                              */
   /* ---------------------------------- */
